@@ -1,0 +1,35 @@
+# Operating System
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
+.env.local
+.env.*
+!.env.example
+
+# Node / Frontend
+**/node_modules/
+**/.next/
+**/out/
+**/build/
+*.tsbuildinfo
+next-env.d.ts
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python / Backend
+**/venv/
+**/env/
+**/ENV/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.sqlite3
+*.pkl
+*.joblib
+
+
+# Graphify / Tool output
+graphify-out/

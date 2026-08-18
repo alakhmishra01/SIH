@@ -1,0 +1,100 @@
+@import "tailwindcss";
+
+@theme {
+  --color-paper: #F3EFDD;
+  --color-ink: #2B2118;
+  --color-field-green: #3F5C33;
+  --color-subsoil-clay: #8C4A2C;
+  --color-harvest-gold: #C89530;
+  --color-stone: #D8CFB4;
+
+  --font-display: var(--font-fraunces), serif;
+  --font-body: var(--font-public-sans), sans-serif;
+  --font-mono: var(--font-ibm-plex-mono), monospace;
+}
+
+:root {
+  --background: #F3EFDD;
+  --foreground: #2B2118;
+}
+
+body {
+  background-color: #F3EFDD;
+  color: #2B2118;
+  font-family: var(--font-public-sans), sans-serif;
+}
+
+/* Custom Field Ledger Utility Classes */
+.field-tag {
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+}
+
+.btn-field-primary {
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+  background-color: #3F5C33;
+  color: #F3EFDD;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  transition: background-color 200ms ease;
+}
+
+.btn-field-primary:hover {
+  background-color: #2B2118;
+}
+
+.btn-field-secondary {
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+  background-color: #F3EFDD;
+  border: 1px solid #D8CFB4;
+  color: #2B2118;
+  font-weight: 500;
+  transition: border-color 200ms ease, background-color 200ms ease;
+}
+
+.btn-field-secondary:hover {
+  border-color: #3F5C33;
+  background-color: #EBE5CF;
+}
+
+/* Ledger Card & Input styling */
+.ledger-card {
+  background-color: #F3EFDD;
+  border: 1px solid #D8CFB4;
+  transition: border-color 200ms ease;
+}
+
+.ledger-card:hover {
+  border-color: #3F5C33;
+}
+
+.ledger-input {
+  background-color: transparent;
+  border-bottom: 1px solid #D8CFB4;
+  color: #2B2118;
+  padding: 8px 4px;
+  font-family: var(--font-ibm-plex-mono), monospace;
+  outline: none;
+  transition: border-color 200ms ease;
+}
+
+.ledger-input:focus {
+  border-bottom: 2px solid #3F5C33;
+}
+
+/* Animation keyframes for Soil Horizon progress fill */
+@keyframes horizonFill {
+  0% {
+    width: 0%;
+  }
+  50% {
+    width: 70%;
+  }
+  100% {
+    width: 100%;
+  }
+}
+
+.animate-horizon-fill {
+  animation: horizonFill 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
