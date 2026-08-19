@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState } from "react";
-import { MapPin, Sliders, Calendar, Layers, RefreshCw } from "lucide-react";
-import { fetchSoilData, reverseGeocodeState } from "@/lib/api";
+import React, { useState, useEffect } from "react";
+import { MapPin, Sliders, Calendar, Layers, RefreshCw, CloudSun, Thermometer, Droplets, Sun } from "lucide-react";
+import { fetchSoilData, fetchWeatherClimate, reverseGeocodeState } from "@/lib/api";
 
 interface LocationSoilFormProps {
   onRecommend: (data: {
@@ -13,6 +13,8 @@ interface LocationSoilFormProps {
     K: number;
     ph: number;
     rainfall_override?: number;
+    sowing_date?: string;
+    season?: string;
   }) => void;
   onPredictYield: (data: {
     crop: string;
@@ -27,19 +29,37 @@ interface LocationSoilFormProps {
 }
 
 const INDIAN_STATES = [
-  "Assam", "Andhra Pradesh", "Bihar", "Chhattisgarh", "Gujarat", "Haryana",
-  "Karnataka", "Kerala", "Madhya Pradesh", "Maharashtra", "Odisha",
-  "Punjab", "Rajasthan", "Tamil Nadu", "Telangana", "Uttar Pradesh", "West Bengal"
+  "Madhya Pradesh", "Maharashtra", "Uttar Pradesh", "Rajasthan", "Gujarat",
+  "Punjab", "Haryana", "Bihar", "West Bengal", "Odisha", "Chhattisgarh",
+  "Karnataka", "Andhra Pradesh", "Telangana", "Tamil Nadu", "Kerala", "Assam"
 ];
 
+// Calibrated field crops supported across models
 const CROPS_LIST = [
-  "Rice", "Maize", "Chickpea", "Kidneybeans", "Pigeonpeas", "Mothbeans",
-  "Mungbean", "Blackgram", "Lentil", "Pomegranate", "Banana", "Mango",
-  "Grapes", "Watermelon", "Muskmelon", "Apple", "Orange", "Papaya",
-  "Coconut", "Cotton", "Jute", "Coffee", "Wheat", "Sugarcane"
+  { name: "Soyabean", category: "Oilseeds & Legumes" },
+  { name: "Rice", category: "Cereals & Grains" },
+  { name: "Wheat", category: "Cereals & Grains" },
+  { name: "Maize", category: "Cereals & Grains" },
+  { name: "Cotton", category: "Commercial & Fiber" },
+  { name: "Sugarcane", category: "Commercial & Sugar" },
+  { name: "Chickpea", category: "Pulses & Legumes" },
+  { name: "Pigeonpeas", category: "Pulses & Legumes" },
+  { name: "Groundnut", category: "Oilseeds" },
+  { name: "Potato", category: "Tubers & Vegetables" },
+  { name: "Onion", category: "Vegetables & Condiments" },
+  { name: "Banana", category: "Fruit Crops" },
+  { name: "Jute", category: "Fiber Crops" },
+  { name: "Sunflower", category: "Oilseeds" },
+  { name: "Turmeric", category: "Spices" },
+  { name: "Ginger", category: "Spices" },
+  { name: "Garlic", category: "Spices" },
+  { name: "Bajra", category: "Millets" },
+  { name: "Jowar", category: "Millets" },
+  { name: "Ragi", category: "Millets" },
+  { name: "Muskmelon", category: "Horticulture (Zaid / Dry Season Only)" },
+  { name: "Watermelon", category: "Horticulture (Zaid / Dry Season Only)" }
 ];
 
-// Helper: get today's date in YYYY-MM-DD format
 function getTodayDate(): string {
   const d = new Date();
   const year = d.getFullYear();
@@ -48,78 +68,107 @@ function getTodayDate(): string {
   return `${year}-${month}-${day}`;
 }
 
+function safeNum(val: unknown, fallback: number): number {
+  const n = Number(val);
+  return isNaN(n) ? fallback : n;
+}
+
 export const LocationSoilForm: React.FC<LocationSoilFormProps> = ({
   onRecommend,
   onPredictYield,
   loading
 }) => {
-  const [lat, setLat] = useState<number>(26.14);
-  const [lon, setLon] = useState<number>(91.73);
-  const [locationName, setLocationName] = useState<string>("Guwahati, Assam (Default)");
+  const [lat, setLat] = useState<number>(23.2147);
+  const [lon, setLon] = useState<number>(77.3978);
   const [geolocating, setGeolocating] = useState<boolean>(false);
 
   // Soil Nutrients
-  const [N, setN] = useState<number>(90);
-  const [P, setP] = useState<number>(42);
-  const [K, setK] = useState<number>(43);
-  const [ph, setPh] = useState<number>(6.5);
-  const [rainfallOverride, setRainfallOverride] = useState<string>("");
+  const [N, setN] = useState<number>(85);
+  const [P, setP] = useState<number>(45);
+  const [K, setK] = useState<number>(50);
+  const [ph, setPh] = useState<number>(7.2);
+  const [soilTexture, setSoilTexture] = useState<string>("Vertisol / Heavy Black Clay");
+  const [socPct, setSocPct] = useState<number>(0.95);
 
-  // Crop & Sowing fields
-  const [crop, setCrop] = useState<string>("Rice");
+  // Climate Normals (Seasonal projection)
+  const [rainfallSeasonal, setRainfallSeasonal] = useState<number>(1450);
+  const [rainfallOverride, setRainfallOverride] = useState<string>("");
+  const [tempC, setTempC] = useState<number>(26.5);
+  const [humidityPct, setHumidityPct] = useState<number>(82);
+  const [solarRad, setSolarRad] = useState<number>(18.5);
+
+  // Crop & Sowing parameters
+  const [crop, setCrop] = useState<string>("Soyabean");
   const [sowingDate, setSowingDate] = useState<string>(getTodayDate());
   const [areaHa, setAreaHa] = useState<number>(2.5);
-  const [state, setState] = useState<string>("Assam");
+  const [state, setState] = useState<string>("Madhya Pradesh");
   const [season, setSeason] = useState<string>("Kharif");
 
-  const handleGeolocation = () => {
+  const [statusMessage, setStatusMessage] = useState<string>("");
+
+  const handleGeolocation = async () => {
     if (!navigator.geolocation) {
       alert("Geolocation is not supported by your browser.");
       return;
     }
     setGeolocating(true);
+    setStatusMessage("Querying GPS coordinates...");
+
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         const userLat = parseFloat(pos.coords.latitude.toFixed(4));
         const userLon = parseFloat(pos.coords.longitude.toFixed(4));
         setLat(userLat);
         setLon(userLon);
-        setLocationName(`Lat: ${userLat}, Lon: ${userLon} (Detected)`);
 
-        // Auto-detect state from GPS coordinates via reverse geocoding
+        // 1. Auto-detect State
         try {
           const detectedState = await reverseGeocodeState(userLat, userLon);
           if (detectedState) {
-            // Match against our list of Indian states (fuzzy match)
             const matched = INDIAN_STATES.find(
               (s) => s.toLowerCase() === detectedState.toLowerCase()
             );
-            if (matched) {
-              setState(matched);
-            }
-            setLocationName(`${detectedState} (GPS Detected)`);
+            if (matched) setState(matched);
           }
         } catch (e) {
-          console.warn("Reverse geocoding failed:", e);
+          console.warn("Reverse geocode warning:", e);
         }
 
-        // Auto-fetch soil data for detected location from backend
+        // 2. Auto-fetch Climate Normals & Seasonal Precipitation
+        try {
+          const weather = await fetchWeatherClimate(userLat, userLon, sowingDate);
+          if (weather) {
+            setTempC(weather.temp_c);
+            setHumidityPct(weather.humidity_pct);
+            setRainfallSeasonal(weather.rainfall_seasonal_mm || weather.rainfall_mm);
+            setSolarRad(weather.solar_radiation_mj || 18.5);
+          }
+        } catch (e) {
+          console.warn("Weather fetch warning:", e);
+        }
+
+        // 3. Auto-fetch ISRIC SoilGrids v2 Profile
         try {
           const soil = await fetchSoilData(userLat, userLon);
           if (soil) {
-            setN(Math.round(soil.estimated_N));
-            setP(Math.round(soil.estimated_P));
-            setK(Math.round(soil.estimated_K));
-            setPh(soil.ph);
+            setN(Math.round(safeNum(soil.estimated_N, 85)));
+            setP(Math.round(safeNum(soil.estimated_P, 45)));
+            setK(Math.round(safeNum(soil.estimated_K, 50)));
+            setPh(safeNum(soil.ph, 7.2));
+            setSoilTexture(soil.soil_texture_class || "Vertisol / Heavy Black Clay");
+            setSocPct(soil.organic_matter_pct || 0.95);
+            setStatusMessage(`✓ GPS, Climate Normals & SoilGrids v2 Profile Synced for (${userLat}°N, ${userLon}°E)`);
           }
         } catch (e) {
-          console.warn("Soil auto-fetch failed (backend may be offline):", e);
+          console.warn("Soil fetch warning:", e);
+          setStatusMessage("✓ GPS synced (Soil/Climate used calibrated regional baselines)");
         }
 
         setGeolocating(false);
       },
       (err) => {
-        console.warn("Geolocation denied/failed, falling back to defaults.", err);
+        console.warn("Geolocation fallback:", err);
+        setStatusMessage("⚠ Geolocation denied — calibrated regional baseline loaded.");
         setGeolocating(false);
       }
     );
@@ -128,13 +177,15 @@ export const LocationSoilForm: React.FC<LocationSoilFormProps> = ({
   const handleRecommendSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onRecommend({
-      lat,
-      lon,
-      N,
-      P,
-      K,
-      ph,
-      rainfall_override: rainfallOverride ? parseFloat(rainfallOverride) : undefined
+      lat: safeNum(lat, 23.2147),
+      lon: safeNum(lon, 77.3978),
+      N: safeNum(N, 85),
+      P: safeNum(P, 45),
+      K: safeNum(K, 50),
+      ph: safeNum(ph, 7.2),
+      rainfall_override: rainfallOverride ? parseFloat(rainfallOverride) : rainfallSeasonal,
+      sowing_date: sowingDate,
+      season
     });
   };
 
@@ -142,10 +193,10 @@ export const LocationSoilForm: React.FC<LocationSoilFormProps> = ({
     e.preventDefault();
     onPredictYield({
       crop,
-      lat,
-      lon,
+      lat: safeNum(lat, 23.2147),
+      lon: safeNum(lon, 77.3978),
       sowing_date: sowingDate,
-      area_ha: areaHa,
+      area_ha: safeNum(areaHa, 2.5),
       state,
       season
     });
@@ -155,8 +206,12 @@ export const LocationSoilForm: React.FC<LocationSoilFormProps> = ({
     <div className="ledger-card p-6 rounded-md mb-8">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-4 border-b border-stone mb-6 gap-2">
         <div>
-          <span className="text-xs font-mono uppercase tracking-wider text-ink/60">SECTION 01 — FIELD LOG ENTRY</span>
-          <h2 className="font-display text-xl font-semibold text-ink">Field Location & Soil Metrics</h2>
+          <span className="text-xs font-mono uppercase tracking-wider text-ink/60">
+            SECTION 01 — FIELD LOG & AGRONOMIC ENTRY
+          </span>
+          <h2 className="font-display text-xl font-semibold text-ink">
+            Field Location, Climate Normals & Soil Profile
+          </h2>
         </div>
         
         <button
@@ -166,9 +221,15 @@ export const LocationSoilForm: React.FC<LocationSoilFormProps> = ({
           className="btn-field-secondary px-3 py-1.5 text-xs flex items-center gap-1.5 font-mono"
         >
           {geolocating ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <MapPin className="w-3.5 h-3.5 text-field-green" />}
-          <span>{geolocating ? "DETECTING GPS & SOIL..." : "GEOLOCATE FIELD"}</span>
+          <span>{geolocating ? "FETCHING CLIMATE & SOIL..." : "GEOLOCATE FIELD"}</span>
         </button>
       </div>
+
+      {statusMessage && (
+        <div className="mb-4 px-3 py-2 text-xs font-mono bg-paper border border-stone rounded-sm text-ink/80 flex items-center gap-2">
+          <span>{statusMessage}</span>
+        </div>
+      )}
 
       <form className="space-y-6">
         {/* Location Row */}
@@ -211,13 +272,47 @@ export const LocationSoilForm: React.FC<LocationSoilFormProps> = ({
           </div>
         </div>
 
-        {/* Soil Test Nutrients Row */}
-        <div>
-          <div className="flex items-center gap-2 mb-3">
-            <Sliders className="w-4 h-4 text-field-green" />
-            <h3 className="font-display text-sm font-semibold text-ink uppercase tracking-wide">
-              Soil Test Analysis (NPK & pH)
+        {/* Live Environmental Normals Display Bar */}
+        <div className="bg-paper p-3.5 border border-stone rounded-sm">
+          <div className="flex items-center gap-2 mb-2">
+            <CloudSun className="w-4 h-4 text-harvest-gold" />
+            <h3 className="font-display text-xs font-bold text-ink uppercase tracking-wider">
+              Projected Climate Normals (~120-Day Crop Cycle Window)
             </h3>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
+            <div className="p-2 bg-stone/10 rounded">
+              <span className="text-ink/60 block text-[10px]">CUMULATIVE RAINFALL</span>
+              <strong className="text-sm font-bold text-field-green">{rainfallSeasonal} mm</strong>
+            </div>
+            <div className="p-2 bg-stone/10 rounded">
+              <span className="text-ink/60 block text-[10px]">MEAN TEMPERATURE</span>
+              <strong className="text-sm font-bold text-ink">{tempC}°C</strong>
+            </div>
+            <div className="p-2 bg-stone/10 rounded">
+              <span className="text-ink/60 block text-[10px]">RELATIVE HUMIDITY</span>
+              <strong className="text-sm font-bold text-ink">{humidityPct}%</strong>
+            </div>
+            <div className="p-2 bg-stone/10 rounded">
+              <span className="text-ink/60 block text-[10px]">SOLAR RADIATION</span>
+              <strong className="text-sm font-bold text-ink">{solarRad} MJ/m²</strong>
+            </div>
+          </div>
+        </div>
+
+        {/* Soil Profile & NPK Inputs */}
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Sliders className="w-4 h-4 text-field-green" />
+              <h3 className="font-display text-sm font-semibold text-ink uppercase tracking-wide">
+                Soil Profile & Mineral Nutrients (NPK & pH)
+              </h3>
+            </div>
+            <span className="text-[11px] font-mono text-ink/70 px-2 py-0.5 bg-paper border border-stone rounded">
+              Texture: {soilTexture} (SOC: {socPct}%)
+            </span>
           </div>
           
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
@@ -226,10 +321,10 @@ export const LocationSoilForm: React.FC<LocationSoilFormProps> = ({
               <div className="flex items-center gap-1">
                 <input
                   type="number"
-                  min="0"
-                  max="200"
+                  min="10"
+                  max="300"
                   value={N}
-                  onChange={(e) => setN(parseFloat(e.target.value) || 0)}
+                  onChange={(e) => setN(safeNum(e.target.value, 10))}
                   className="ledger-input w-full font-mono text-lg font-bold text-field-green"
                 />
                 <span className="text-xs font-mono text-ink/50">kg/ha</span>
@@ -241,10 +336,10 @@ export const LocationSoilForm: React.FC<LocationSoilFormProps> = ({
               <div className="flex items-center gap-1">
                 <input
                   type="number"
-                  min="0"
-                  max="200"
+                  min="5"
+                  max="150"
                   value={P}
-                  onChange={(e) => setP(parseFloat(e.target.value) || 0)}
+                  onChange={(e) => setP(safeNum(e.target.value, 5))}
                   className="ledger-input w-full font-mono text-lg font-bold text-field-green"
                 />
                 <span className="text-xs font-mono text-ink/50">kg/ha</span>
@@ -256,10 +351,10 @@ export const LocationSoilForm: React.FC<LocationSoilFormProps> = ({
               <div className="flex items-center gap-1">
                 <input
                   type="number"
-                  min="0"
+                  min="5"
                   max="200"
                   value={K}
-                  onChange={(e) => setK(parseFloat(e.target.value) || 0)}
+                  onChange={(e) => setK(safeNum(e.target.value, 5))}
                   className="ledger-input w-full font-mono text-lg font-bold text-field-green"
                 />
                 <span className="text-xs font-mono text-ink/50">kg/ha</span>
@@ -272,10 +367,10 @@ export const LocationSoilForm: React.FC<LocationSoilFormProps> = ({
                 <input
                   type="number"
                   step="0.1"
-                  min="3.0"
-                  max="10.0"
+                  min="4.5"
+                  max="9.0"
                   value={ph}
-                  onChange={(e) => setPh(parseFloat(e.target.value) || 6.5)}
+                  onChange={(e) => setPh(safeNum(e.target.value, 6.5))}
                   className="ledger-input w-full font-mono text-lg font-bold text-subsoil-clay"
                 />
                 <span className="text-xs font-mono text-ink/50">pH</span>
@@ -283,11 +378,11 @@ export const LocationSoilForm: React.FC<LocationSoilFormProps> = ({
             </div>
 
             <div className="bg-paper p-3 border border-stone rounded-sm col-span-2 md:col-span-1">
-              <label className="block text-xs font-mono text-ink/70 mb-1">RAINFALL (MM)</label>
+              <label className="block text-xs font-mono text-ink/70 mb-1">RAINFALL OVERRIDE</label>
               <div className="flex items-center gap-1">
                 <input
                   type="number"
-                  placeholder="Auto-fetch"
+                  placeholder={`${rainfallSeasonal} mm`}
                   value={rainfallOverride}
                   onChange={(e) => setRainfallOverride(e.target.value)}
                   className="ledger-input w-full font-mono text-sm"
@@ -297,7 +392,7 @@ export const LocationSoilForm: React.FC<LocationSoilFormProps> = ({
           </div>
         </div>
 
-        {/* Crop Selection & Sowing Parameters for Yield */}
+        {/* Crop Selection & Sowing Parameters */}
         <div className="pt-2">
           <div className="flex items-center gap-2 mb-3">
             <Calendar className="w-4 h-4 text-subsoil-clay" />
@@ -315,7 +410,9 @@ export const LocationSoilForm: React.FC<LocationSoilFormProps> = ({
                 className="ledger-input w-full cursor-pointer font-body"
               >
                 {CROPS_LIST.map((c) => (
-                  <option key={c} value={c}>{c}</option>
+                  <option key={c.name} value={c.name}>
+                    {c.name} — {c.category}
+                  </option>
                 ))}
               </select>
             </div>
@@ -335,9 +432,9 @@ export const LocationSoilForm: React.FC<LocationSoilFormProps> = ({
               <input
                 type="number"
                 step="0.1"
-                min="0.1"
+                min="0.05"
                 value={areaHa}
-                onChange={(e) => setAreaHa(parseFloat(e.target.value) || 1.0)}
+                onChange={(e) => setAreaHa(safeNum(e.target.value, 1.0))}
                 className="ledger-input w-full font-mono font-bold"
               />
             </div>
@@ -349,10 +446,10 @@ export const LocationSoilForm: React.FC<LocationSoilFormProps> = ({
                 onChange={(e) => setSeason(e.target.value)}
                 className="ledger-input w-full cursor-pointer"
               >
-                <option value="Kharif">Kharif (Monsoon)</option>
-                <option value="Rabi">Rabi (Winter)</option>
-                <option value="Summer">Summer (Zaid)</option>
-                <option value="Whole Year">Whole Year</option>
+                <option value="Kharif">Kharif (Monsoon • July–Oct)</option>
+                <option value="Rabi">Rabi (Winter • Nov–March)</option>
+                <option value="Summer">Summer / Zaid (Dry • Feb–May)</option>
+                <option value="Whole Year">Whole Year (Annual)</option>
               </select>
             </div>
           </div>

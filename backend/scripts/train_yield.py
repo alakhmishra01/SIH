@@ -17,8 +17,11 @@ def train():
     print("Loading Crop Yield Dataset...")
     df = pd.read_csv(DATA_PATH)
 
-    # Clean data if necessary
+    # Clean and trim data
     df = df.dropna()
+    df['Crop'] = df['Crop'].str.strip()
+    df['Season'] = df['Season'].str.strip()
+    df['State'] = df['State'].str.strip()
 
     cat_features = ['Crop', 'Season', 'State']
     num_features = ['Crop_Year', 'Area', 'Annual_Rainfall', 'Fertilizer', 'Pesticide']
@@ -36,10 +39,10 @@ def train():
         ]
     )
 
-    print("\n--- Training Random Forest Regressor Pipeline ---")
+    print("\n--- Training Random Forest Regressor Pipeline with Dynamic Categorical Dispatching ---")
     pipeline = Pipeline(steps=[
         ('preprocessor', preprocessor),
-        ('regressor', RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1))
+        ('regressor', RandomForestRegressor(n_estimators=100, max_depth=20, min_samples_split=4, random_state=42, n_jobs=-1))
     ])
 
     pipeline.fit(X_train, y_train)
@@ -65,6 +68,21 @@ def train():
     unique_seasons = sorted(df['Season'].unique().tolist())
     unique_states = sorted(df['State'].unique().tolist())
 
+    # Calculate per-crop baseline statistics (min, max, median yield)
+    crop_stats = {}
+    for crop in unique_crops:
+        sub = df[df['Crop'] == crop]
+        crop_stats[crop] = {
+            "mean_yield": float(sub['Yield'].mean()),
+            "min_yield": float(sub['Yield'].min()),
+            "max_yield": float(sub['Yield'].max()),
+            "p25_yield": float(sub['Yield'].quantile(0.25)),
+            "p75_yield": float(sub['Yield'].quantile(0.75)),
+            "record_count": int(len(sub)),
+            "common_states": sub['State'].value_counts().head(5).index.tolist(),
+            "common_seasons": sub['Season'].value_counts().head(3).index.tolist()
+        }
+
     save_payload = {
         "pipeline": pipeline,
         "cat_features": cat_features,
@@ -72,6 +90,7 @@ def train():
         "unique_crops": unique_crops,
         "unique_seasons": unique_seasons,
         "unique_states": unique_states,
+        "crop_stats": crop_stats,
         "feature_importances": feature_importance_map,
         "metrics": {
             "r2_score": float(r2),
@@ -82,7 +101,7 @@ def train():
 
     model_file = os.path.join(MODEL_DIR, "crop_yield_rf.pkl")
     joblib.dump(save_payload, model_file)
-    print(f"\nSaved crop yield model payload to {model_file}")
+    print(f"\nSaved crop yield model payload with {len(unique_crops)} calibrated crop registries to {model_file}")
 
     return save_payload["metrics"]
 

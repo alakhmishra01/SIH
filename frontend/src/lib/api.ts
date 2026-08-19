@@ -27,6 +27,8 @@ export async function recommendCrop(data: {
   K: number;
   ph: number;
   rainfall_override?: number;
+  sowing_date?: string;
+  season?: string;
 }): Promise<CropRecommendResponse> {
   const sessionId = getOrCreateSessionId();
   const res = await fetch(`${BACKEND_URL}/recommend-crop`, {
@@ -35,8 +37,9 @@ export async function recommendCrop(data: {
     body: JSON.stringify({ ...data, session_id: sessionId }),
   });
   if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Failed to recommend crop: ${err}`);
+    const err = await res.json().catch(() => ({ detail: "Unknown error" }));
+    const msg = typeof err.detail === "string" ? err.detail : JSON.stringify(err.detail);
+    throw new Error(`Crop Recommendation Error: ${msg}`);
   }
   return res.json();
 }
@@ -49,6 +52,8 @@ export async function predictYield(data: {
   area_ha: number;
   state?: string;
   season?: string;
+  fertilizer_kg?: number;
+  pesticide_kg?: number;
 }): Promise<YieldPredictResponse> {
   const sessionId = getOrCreateSessionId();
   const res = await fetch(`${BACKEND_URL}/predict-yield`, {
@@ -57,8 +62,12 @@ export async function predictYield(data: {
     body: JSON.stringify({ ...data, session_id: sessionId }),
   });
   if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Failed to predict yield: ${err}`);
+    const err = await res.json().catch(() => ({ detail: "Unknown error" }));
+    if (err.detail && err.detail.message) {
+      throw new Error(err.detail.message);
+    }
+    const msg = typeof err.detail === "string" ? err.detail : JSON.stringify(err.detail);
+    throw new Error(`Yield Forecast Error: ${msg}`);
   }
   return res.json();
 }
@@ -84,7 +93,9 @@ export async function fetchSoilData(lat: number, lon: number): Promise<{
   ph: number;
   clay_pct: number;
   sand_pct: number;
+  silt_pct: number;
   organic_matter_pct: number;
+  soil_texture_class: string;
   estimated_N: number;
   estimated_P: number;
   estimated_K: number;
@@ -92,6 +103,25 @@ export async function fetchSoilData(lat: number, lon: number): Promise<{
 }> {
   const res = await fetch(`${BACKEND_URL}/soil?lat=${lat}&lon=${lon}`);
   if (!res.ok) throw new Error("Failed to fetch soil data");
+  return res.json();
+}
+
+// Fetch live weather & climate normals for a given lat/lon
+export async function fetchWeatherClimate(lat: number, lon: number, sowingDate?: string): Promise<{
+  temp_c: number;
+  temp_min_c: number;
+  temp_max_c: number;
+  humidity_pct: number;
+  rainfall_mm: number;
+  rainfall_seasonal_mm: number;
+  solar_radiation_mj: number;
+  description: string;
+  source: string;
+}> {
+  const query = new URLSearchParams({ lat: lat.toString(), lon: lon.toString() });
+  if (sowingDate) query.append("sowing_date", sowingDate);
+  const res = await fetch(`${BACKEND_URL}/weather?${query.toString()}`);
+  if (!res.ok) throw new Error("Failed to fetch weather climate normals");
   return res.json();
 }
 

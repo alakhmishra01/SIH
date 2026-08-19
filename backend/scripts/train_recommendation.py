@@ -2,17 +2,10 @@ import os
 import joblib
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.model_selection import train_test_split, StratifiedKFold, cross_val_score
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, classification_report
-from sklearn.preprocessing import LabelEncoder
-
-try:
-    from xgboost import XGBClassifier
-    HAS_XGB = True
-except Exception as e:
-    print(f"XGBoost unavailable ({e}), using Scikit-Learn RandomForestClassifier baseline.")
-    HAS_XGB = False
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.metrics import accuracy_score, classification_report, log_loss
 
 DATA_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "raw", "Crop_recommendation.csv")
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "models")
@@ -24,48 +17,82 @@ def train():
 
     features = ['N', 'P', 'K', 'temperature', 'humidity', 'ph', 'rainfall']
     X = df[features]
-    y = df['label']
+    y = df['label'].str.strip().str.lower()
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+    # Stratified split to preserve class distribution across all 22 crops
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
 
-    print("\n--- Training Random Forest Baseline Classifier ---")
-    rf_model = RandomForestClassifier(n_estimators=100, random_state=42)
-    rf_cv_scores = cross_val_score(rf_model, X, y, cv=5)
-    rf_model.fit(X_train, y_train)
-    rf_preds = rf_model.predict(X_test)
-    rf_acc = accuracy_score(y_test, rf_preds)
-    print(f"Random Forest 5-Fold CV Accuracy: {rf_cv_scores.mean():.4f} (+/- {rf_cv_scores.std()*2:.4f})")
-    print(f"Random Forest Test Accuracy: {rf_acc:.4f}")
+    print("\n--- Training Base Random Forest Classifier ---")
+    base_rf = RandomForestClassifier(
+        n_estimators=150,
+        max_depth=15,
+        min_samples_split=4,
+        min_samples_leaf=2,
+        random_state=42,
+        n_jobs=-1
+    )
+    base_rf.fit(X_train, y_train)
+    raw_acc = accuracy_score(y_test, base_rf.predict(X_test))
+    print(f"Base Random Forest Test Accuracy: {raw_acc:.4f}")
 
-    if HAS_XGB:
-        print("\n--- Training XGBoost Classifier ---")
-        try:
-            le = LabelEncoder()
-            y_encoded = le.fit_transform(y)
-            X_tr_xgb, X_te_xgb, y_tr_xgb, y_te_xgb = train_test_split(X, y_encoded, test_size=0.2, random_state=42, stratify=y_encoded)
-            xgb_model = XGBClassifier(n_estimators=100, learning_rate=0.1, random_state=42)
-            xgb_model.fit(X_tr_xgb, y_tr_xgb)
-            xgb_preds = xgb_model.predict(X_te_xgb)
-            xgb_acc = accuracy_score(y_te_xgb, xgb_preds)
-            print(f"XGBoost Test Accuracy: {xgb_acc:.4f}")
-        except Exception as err:
-            print(f"XGBoost training skipped: {err}")
+    print("\n--- Calibrating Probabilities with CalibratedClassifierCV (Sigmoid/Platt Scaling) ---")
+    # Calibrate on stratified folds to eliminate overconfident probability spikes
+    calibrated_clf = CalibratedClassifierCV(estimator=base_rf, method='sigmoid', cv=5)
+    calibrated_clf.fit(X_train, y_train)
 
-    # Use Random Forest as primary model (since it directly outputs calibrated class probabilities)
+    cal_preds = calibrated_clf.predict(X_test)
+    cal_probs = calibrated_clf.predict_proba(X_test)
+    cal_acc = accuracy_score(y_test, cal_preds)
+    loss = log_loss(y_test, cal_probs)
+
+    print(f"Calibrated Classifier Test Accuracy: {cal_acc:.4f}")
+    print(f"Calibrated Log Loss (Brier/Cross-Entropy): {loss:.4f}")
+
+    # Compute baseline feature distributions for SHAP / Tree attribution
+    feature_stats = {}
+    for col in features:
+        feature_stats[col] = {
+            "mean": float(df[col].mean()),
+            "std": float(df[col].std()),
+            "min": float(df[col].min()),
+            "max": float(df[col].max()),
+            "p25": float(df[col].quantile(0.25)),
+            "p50": float(df[col].quantile(0.50)),
+            "p75": float(df[col].quantile(0.75))
+        }
+
+    # Per-crop optimal physiological profiles
+    crop_profiles = {}
+    for crop in df['label'].unique():
+        sub = df[df['label'] == crop]
+        crop_profiles[crop.lower()] = {
+            "N_mean": float(sub['N'].mean()),
+            "P_mean": float(sub['P'].mean()),
+            "K_mean": float(sub['K'].mean()),
+            "ph_mean": float(sub['ph'].mean()),
+            "rainfall_mean": float(sub['rainfall'].mean()),
+            "temp_mean": float(sub['temperature'].mean()),
+            "humidity_mean": float(sub['humidity'].mean())
+        }
+
     save_payload = {
-        "model": rf_model,
+        "calibrated_model": calibrated_clf,
+        "base_model": base_rf,
         "features": features,
-        "classes": list(rf_model.classes_),
+        "classes": list(calibrated_clf.classes_),
+        "feature_stats": feature_stats,
+        "crop_profiles": crop_profiles,
         "metrics": {
-            "cv_accuracy_mean": float(rf_cv_scores.mean()),
-            "cv_accuracy_std": float(rf_cv_scores.std()),
-            "test_accuracy": float(rf_acc)
+            "test_accuracy": float(cal_acc),
+            "log_loss": float(loss)
         }
     }
 
     model_file = os.path.join(MODEL_DIR, "crop_recommendation_rf.pkl")
     joblib.dump(save_payload, model_file)
-    print(f"\nSaved crop recommendation model payload to {model_file}")
+    print(f"\nSaved calibrated crop recommendation model to {model_file}")
 
     return save_payload["metrics"]
 

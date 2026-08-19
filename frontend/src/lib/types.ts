@@ -2,6 +2,9 @@ export interface RecommendedCrop {
   crop: string;
   confidence: number;
   rank: number;
+  agro_suitability?: string;
+  suitability_notes?: string;
+  feature_contributions?: Record<string, number>;
 }
 
 export interface CropRecommendResponse {
@@ -13,20 +16,29 @@ export interface CropRecommendResponse {
     ph: number;
     clay_pct?: number;
     sand_pct?: number;
+    silt_pct?: number;
     organic_matter_pct?: number;
+    soil_texture_class?: string;
+    source?: string;
   };
   weather_summary: {
     temp_c: number;
+    temp_min_c?: number;
+    temp_max_c?: number;
     humidity_pct: number;
     rainfall_mm: number;
+    rainfall_seasonal_mm?: number;
+    solar_radiation_mj?: number;
     description: string;
     source: string;
   };
+  agronomic_advisory_flags?: string[];
 }
 
 export interface FactorImportance {
   factor: string;
   importance_pct: number;
+  impact_direction?: string;
   description: string;
 }
 
@@ -40,6 +52,7 @@ export interface YieldPredictResponse {
   total_production_t: number;
   top_factors: FactorImportance[];
   model_disclaimer: string;
+  agro_zone_context?: string;
 }
 
 export interface AdvisoryMessage {
@@ -56,8 +69,12 @@ export interface AdvisoryResponse {
   messages: AdvisoryMessage[];
   weather_snapshot: {
     temp_c: number;
+    temp_min_c?: number;
+    temp_max_c?: number;
     humidity_pct: number;
     rainfall_mm: number;
+    rainfall_seasonal_mm?: number;
+    solar_radiation_mj?: number;
     description: string;
     source: string;
   };
@@ -65,7 +82,9 @@ export interface AdvisoryResponse {
     ph: number;
     clay_pct: number;
     sand_pct: number;
+    silt_pct?: number;
     organic_matter_pct: number;
+    soil_texture_class?: string;
     source: string;
   };
 }
