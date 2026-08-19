@@ -5,7 +5,9 @@ import {
   HistoryResponse,
 } from "./types";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000/api";
+// Remove any trailing slash from the URL to prevent double-slash issues
+const RAW_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000/api";
+const BACKEND_URL = RAW_URL.replace(/\/+$/, "");
 
 export function getOrCreateSessionId(): string {
   if (typeof window === "undefined") return "server_session";
@@ -75,4 +77,35 @@ export async function getHistory(): Promise<HistoryResponse> {
   const res = await fetch(`${BACKEND_URL}/history?session_id=${sessionId}`);
   if (!res.ok) throw new Error("Failed to fetch prediction history");
   return res.json();
+}
+
+// Fetch live soil data from backend for a given lat/lon
+export async function fetchSoilData(lat: number, lon: number): Promise<{
+  ph: number;
+  clay_pct: number;
+  sand_pct: number;
+  organic_matter_pct: number;
+  estimated_N: number;
+  estimated_P: number;
+  estimated_K: number;
+  source: string;
+}> {
+  const res = await fetch(`${BACKEND_URL}/soil?lat=${lat}&lon=${lon}`);
+  if (!res.ok) throw new Error("Failed to fetch soil data");
+  return res.json();
+}
+
+// Reverse geocode lat/lon to detect Indian state using free Nominatim API
+export async function reverseGeocodeState(lat: number, lon: number): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&zoom=5&addressdetails=1`,
+      { headers: { "User-Agent": "FieldLedger-AgriApp/1.0" } }
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.address?.state || null;
+  } catch {
+    return null;
+  }
 }

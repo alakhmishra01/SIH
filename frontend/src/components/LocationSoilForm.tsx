@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { MapPin, Sliders, Calendar, Layers, RefreshCw } from "lucide-react";
+import { fetchSoilData, reverseGeocodeState } from "@/lib/api";
 
 interface LocationSoilFormProps {
   onRecommend: (data: {
@@ -38,6 +39,15 @@ const CROPS_LIST = [
   "Coconut", "Cotton", "Jute", "Coffee", "Wheat", "Sugarcane"
 ];
 
+// Helper: get today's date in YYYY-MM-DD format
+function getTodayDate(): string {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 export const LocationSoilForm: React.FC<LocationSoilFormProps> = ({
   onRecommend,
   onPredictYield,
@@ -57,7 +67,7 @@ export const LocationSoilForm: React.FC<LocationSoilFormProps> = ({
 
   // Crop & Sowing fields
   const [crop, setCrop] = useState<string>("Rice");
-  const [sowingDate, setSowingDate] = useState<string>("2024-06-15");
+  const [sowingDate, setSowingDate] = useState<string>(getTodayDate());
   const [areaHa, setAreaHa] = useState<number>(2.5);
   const [state, setState] = useState<string>("Assam");
   const [season, setSeason] = useState<string>("Kharif");
@@ -69,12 +79,43 @@ export const LocationSoilForm: React.FC<LocationSoilFormProps> = ({
     }
     setGeolocating(true);
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
+      async (pos) => {
         const userLat = parseFloat(pos.coords.latitude.toFixed(4));
         const userLon = parseFloat(pos.coords.longitude.toFixed(4));
         setLat(userLat);
         setLon(userLon);
         setLocationName(`Lat: ${userLat}, Lon: ${userLon} (Detected)`);
+
+        // Auto-detect state from GPS coordinates via reverse geocoding
+        try {
+          const detectedState = await reverseGeocodeState(userLat, userLon);
+          if (detectedState) {
+            // Match against our list of Indian states (fuzzy match)
+            const matched = INDIAN_STATES.find(
+              (s) => s.toLowerCase() === detectedState.toLowerCase()
+            );
+            if (matched) {
+              setState(matched);
+            }
+            setLocationName(`${detectedState} (GPS Detected)`);
+          }
+        } catch (e) {
+          console.warn("Reverse geocoding failed:", e);
+        }
+
+        // Auto-fetch soil data for detected location from backend
+        try {
+          const soil = await fetchSoilData(userLat, userLon);
+          if (soil) {
+            setN(Math.round(soil.estimated_N));
+            setP(Math.round(soil.estimated_P));
+            setK(Math.round(soil.estimated_K));
+            setPh(soil.ph);
+          }
+        } catch (e) {
+          console.warn("Soil auto-fetch failed (backend may be offline):", e);
+        }
+
         setGeolocating(false);
       },
       (err) => {
@@ -125,7 +166,7 @@ export const LocationSoilForm: React.FC<LocationSoilFormProps> = ({
           className="btn-field-secondary px-3 py-1.5 text-xs flex items-center gap-1.5 font-mono"
         >
           {geolocating ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <MapPin className="w-3.5 h-3.5 text-field-green" />}
-          <span>{geolocating ? "DETECTING GPS..." : "GEOLOCATE FIELD"}</span>
+          <span>{geolocating ? "DETECTING GPS & SOIL..." : "GEOLOCATE FIELD"}</span>
         </button>
       </div>
 
